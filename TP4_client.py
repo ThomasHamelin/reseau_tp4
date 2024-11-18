@@ -36,7 +36,7 @@ class Client:
         except glosocket.GLOSocketError:
             sys.exit("Erreur lors de la connexion")
 
-        print(f"Connection au port {self._server_socket.getsockname()[1]}")
+        print(f"Connection au port {self._user_socket.getsockname()[1]}")
 
     def _register(self) -> None:
         """
@@ -67,7 +67,7 @@ class Client:
             reply = json.loads(glosocket.recv_mesg(self._user_socket))
             if reply["header"] == gloutils.Headers.OK:
                 self._username = username
-            else if reply["header"] == gloutils.Headers.ERROR:
+            elif reply["header"] == gloutils.Headers.ERROR:
                 print(reply["payload"])
         except glosocket.GLOSocketError:
             print("Erreur lors de la reception de l'authentication")
@@ -101,7 +101,7 @@ class Client:
             reply = json.loads(glosocket.recv_mesg(self._user_socket))
             if reply["header"] == gloutils.Headers.OK:
                 self._username = username
-            else if reply["header"] == gloutils.Headers.ERROR:
+            elif reply["header"] == gloutils.Headers.ERROR:
                 print(reply["payload"])
         except glosocket.GLOSocketError:
             print("Erreur lors de la reception de l'authentication")
@@ -177,7 +177,7 @@ class Client:
                     ))
                 return
 
-        else if reply["header"] == gloutils.Headers.ERROR:
+        elif reply["header"] == gloutils.Headers.ERROR:
             print(reply["payload"])
             return
 
@@ -208,6 +208,15 @@ class Client:
 
         Met à jour l'attribut `_username`.
         """
+        message = gloutils.GloMessage()
+        message["header"] = gloutils.Headers.AUTH_LOGOUT
+        try:
+            glosocket.snd_mesg(self._user_socket,json.dumps(message))
+        except glosocket.GLOSocketError:
+            print("Erreur lors de la deconnexion")
+            return
+        self._username = ""
+        return
 
     def run(self) -> None:
         """Point d'entrée du client."""
@@ -225,6 +234,7 @@ class Client:
                         self._login()
                     case '3':
                         self._quit()
+                        should_quit = True
                     case _:
                         print("Choix invalide")
             else:
@@ -233,20 +243,19 @@ class Client:
                 choice = input("Entrez votre choix [1-4]: ")
                 match choice:
                     case '1':
-                        self._read_email()
+                        #self._read_email()
+                        print("Pas encore fait ;)")
                     case '2':
-                        self._send_email()
+                        #self._send_email()
+                        print("Pas encore fait ;)")
                     case '3':
-                        self._check_stats()
+                        #self._check_stats()
+                        print("Pas encore fait ;)")
                     case '4':
                         self._logout()
                     case _:
                         print("Choix invalide")
 
-            if should_quit == True:
-                print("true")
-            else:
-                print("false")
 
 
 def _main() -> int:

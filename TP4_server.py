@@ -13,6 +13,7 @@ import os
 import select
 import socket
 import sys
+import re
 
 import glosocket
 import gloutils
@@ -57,35 +58,52 @@ class Server:
             os.mkdir(gloutils.SERVER_LOST_DIR)
 
 
-    def _handle_client(client_socket: socket.socket) -> None:
+    def _handle_client(self, client_soc) -> None:
 
         try:
-            message = glosocket.recv_mesg(client_socket)
+            message = json.loads(glosocket.recv_mesg(client_soc))
 
         # Si le client s'est déconnecté, on le retire de la liste.
-        except glosocket.GLOSocketError:
-            self._remove_client(client_socket)
+        except glosocket.GLOSocketError as e:
+            self._remove_client(client_soc)
+            print(e)
             return
 
         # Sinon, on récupère l'entête et on appelle la fonction correspondante
-        header, data = message.split(maxsplit=1)
-        if header == AUTH_REGISTER:
-            answer = self._create_account(client_socket, data)
-        elif header == AUTH_LOGIN:
-            answer = self._login(client_socket, data)
-        elif header == INBOX_READING_REQUEST:
+        print(message)
+
+        header = message['header']
+        answer = gloutils.GloMessage()
+
+
+        if header == gloutils.Headers.AUTH_REGISTER:
+            answer = self._create_account(client_soc, message['payload'])
+        elif header == gloutils.Headers.AUTH_LOGIN:
+            answer = self._login(client_soc, message['payload'])
+        elif header == gloutils.Headers.AUTH_LOGOUT:
+            answer = self._logout(client_soc)
+        elif header == gloutils.Headers.INBOX_READING_REQUEST:
             #TODO
-        elif header == INBOX_READING_CHOICE:
+            print("Pas encore fait ;)")
+        elif header == gloutils.Headers.INBOX_READING_CHOICE:
             #TODO
-        elif header == EMAIL_SENDING:
+            print("Pas encore fait ;)")
+        elif header == gloutils.Headers.EMAIL_SENDING:
             #TODO
-        elif header == STATS_REQUEST:
-            answer = self._get_stats(client_socket, data)
-        elif header == BYE:
-            self._remove_client(client_socket)
+            print("Pas encore fait ;)")
+        elif header == gloutils.Headers.STATS_REQUEST:
+            answer = self._get_stats(client_soc, message['payload'])
+        elif header == gloutils.Headers.BYE:
+            self._remove_client(client_soc)
+            return
+        else:
+            print("Mauvais Header, aucun envoi")
             return
 
-        _try_send_message(client_socket, answer)
+        try:
+            glosocket.snd_mesg(client_soc,json.dumps(answer))
+        except glosocket.GLOSocketError as e:
+            print(e)
 
     def cleanup(self) -> None:
         """Ferme toutes les connexions résiduelles."""
@@ -96,18 +114,19 @@ class Server:
     def _accept_client(self) -> None:
         """Accepte un nouveau client."""
         try:
-            client_socket = self._server_socket.accept()[0]
-            self._client_socs.append(client_socket)
-            self._handle_client(client_socket)
+            client_soc = self._server_socket.accept()[0]
+            self._client_socs.append(client_soc)
+            self._handle_client(client_soc)
         except glosocket.GLOSocketError as e:
             self.cleanup()
             sys.exit(e)
 
     def _remove_client(self, client_soc: socket.socket) -> None:
         """Retire le client des structures de données et ferme sa connexion."""
-        if client_soc in _client_socs:
-            _client_socs.remove(client_soc)
+        if client_soc in self._client_socs:
+            self._client_socs.remove(client_soc)
         client_soc.close()
+
 
     def _create_account(self, client_soc: socket.socket,
                         payload: gloutils.AuthPayload
@@ -127,7 +146,7 @@ class Server:
 
             path = os.path.join(gloutils.SERVER_DATA_DIR, username)
 
-            if re.search(r"[a-zA-Z0-9_.-]+", username) is not None:
+            if re.search(r"[a-zA-Z0-9_.-]+", username) is None:
                 message["header"] = gloutils.Headers.ERROR
                 payload1 = gloutils.ErrorPayload()
                 payload1["error_message"] = "Le nom d'utilisateur est invalide"
@@ -142,27 +161,28 @@ class Server:
                 return message
 
 
-            if re.search(r"[a-z]+[A-Z]+[0-9]+.{10,}", password) is not None:
-                os.mkdir(path)
-
-                hasher = hashlib.sha3_512()
-                hasher.update(password.encode('utf-8'))
-
-                filepath = os.path.join(path, gloutils.PASSWORD_FILENAME)
-                with open(filepath, ‘w’) as file:
-                    file.write(hasher.hexdigest())
-
-                self._logged_users[client_soc] = username
-                message["header"] = gloutils.Headers.OK
-
-            else:
+            if re.search(r"[a-z]+", password) is None or re.search(r"[A-Z]+", password) is None or re.search(r"[0-9]+", password) is None or re.search(r".{10,}", password) is None:
                 message["header"] = gloutils.Headers.ERROR
                 payload1 = gloutils.ErrorPayload()
                 payload1["error_message"] = "Le mot de passe doit contenir 10 characteres, un chiffre, une minuscule et une majuscule"
                 message["payload"] = payload1
+                return message
 
+            #si tout bon,
+            os.mkdir(path)
+            hasher = hashlib.sha3_512()
+            hasher.update(password.encode('utf-8'))
+
+            filepath = os.path.join(path, gloutils.PASSWORD_FILENAME)
+            with open(filepath, 'w') as file:
+                file.write(hasher.hexdigest())
+
+            self._logged_users[client_soc] = username
+            message["header"] = gloutils.Headers.OK
 
             return message
+
+
         except glosocket.GLOSocketError as e:
             self.cleanup()
             sys.exit(e)
@@ -213,7 +233,7 @@ class Server:
     def _logout(self, client_soc: socket.socket) -> None:
         """Déconnecte un utilisateur."""
         try:
-            del self._logged_user[client_soc]
+            del self._logged_users[client_soc]
         except glosocket.GLOSocketError as e:
             self.cleanup()
             sys.exit(e)
@@ -289,9 +309,14 @@ class Server:
         waiters = []
         while True:
             # Select readable sockets
-            self._accept_client()
+            result = select.select([self._server_socket] + self._client_socs, [], [])
+            waiters = result[0]
             for waiter in waiters:
                 # Handle sockets
+                if waiter == self._server_socket:
+                    self._accept_client()
+                else:
+                    self._handle_client(waiter)
                 pass
 
 
@@ -301,6 +326,7 @@ def _main() -> int:
         server.run()
     except KeyboardInterrupt:
         server.cleanup()
+        console.clear()
     return 0
 
 
