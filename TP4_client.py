@@ -136,6 +136,51 @@ class Client:
         S'il n'y a pas de courriel à lire, l'utilisateur est averti avant de
         retourner au menu principal.
         """
+        message1 = gloutils.GloMessage()
+        message1["header"] = gloutils.Headers.INBOX_READING_REQUEST
+        #envoi du msg
+        try:
+            glosocket.snd_mesg(self._user_socket,json.dumps(message1))
+        except glosocket.GLOSocketError:
+            print("Erreur lors de la demande de courriels")
+            return
+        #reception de la reponse
+        try:
+            reply1 = json.loads(glosocket.recv_mesg(self._user_socket))
+        except glosocket.GLOSocketError:
+            print("Erreur lors de la reception de la liste de courriels")
+            return
+
+        if reply1["header"] == gloutils.Headers.OK:
+            if reply1["payload"].length != 0:
+                print(reply1["payload"])
+                message2 = gloutils.GloMessage()
+                message2["header"] = gloutils.Headers.INBOX_READING_CHOICE
+                payload2 = gloutils.EmailChoicePayload()
+                payload2["choice"] = input(f"Entrez votre choix [1-{reply1["payload"].length}]: ")
+                try:
+                    glosocket.snd_mesg(self._user_socket,json.dumps(message2))
+                except glosocket.GLOSocketError:
+                    print("Erreur lors de la demande du courriel")
+                    return
+                try:
+                    reply2 = json.loads(glosocket.recv_mesg(self._user_socket))
+                except glosocket.GLOSocketError:
+                    print("Erreur lors de la reception du courriel")
+                    return
+                print(gloutils.EMAIL_DISPLAY.format(
+                    sender=reply2["sender"],
+                    to=reply2["destination"],
+                    subject=reply2["subject"],
+                    date=reply2["date"],
+                    body=reply2["content"]
+                    ))
+                return
+
+        else if reply["header"] == gloutils.Headers.ERROR:
+            print(reply["payload"])
+            return
+
 
     def _send_email(self) -> None:
         """
@@ -148,6 +193,7 @@ class Client:
 
         Transmet ces informations avec l'entête `EMAIL_SENDING`.
         """
+
 
     def _check_stats(self) -> None:
         """

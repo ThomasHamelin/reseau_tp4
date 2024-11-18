@@ -81,6 +81,9 @@ class Server:
             #TODO
         elif header == STATS_REQUEST:
             answer = self._get_stats(client_socket, data)
+        elif header == BYE:
+            self._remove_client(client_socket)
+            return
 
         _try_send_message(client_socket, answer)
 
@@ -124,29 +127,41 @@ class Server:
 
             path = os.path.join(gloutils.SERVER_DATA_DIR, username)
 
-            hasher = hashlib.sha3_512()
-            hasher.update(password.encode('utf-8'))
-            if re.search(r"\W+", var) is None:
+            if re.search(r"[a-zA-Z0-9_.-]+", username) is not None:
+                message["header"] = gloutils.Headers.ERROR
+                payload1 = gloutils.ErrorPayload()
+                payload1["error_message"] = "Le nom d'utilisateur est invalide"
+                message["payload"] = payload1
+                return message
 
-            if not os.path.exists(path):
-                file = create(os.path.join(path, gloutils.PASSWORD_FILENAME), "r")
-                x = hasher.hexdigest() == file.readline()
-
-                if x:
-                    self._logged_users[client_soc] = username
-                    message["header"] = gloutils.Headers.OK
-
-                else:
-                    message["header"] = gloutils.Headers.ERROR
-                    payload1 = gloutils.ErrorPayload()
-                    payload1["error_message"] = "Le mot de passe doit contenir"
-                    message["payload"] = payload1
-            else:
+            if os.path.exists(path):
                 message["header"] = gloutils.Headers.ERROR
                 payload1 = gloutils.ErrorPayload()
                 payload1["error_message"] = "Le nom d'utilisateur n'est pas disponible"
                 message["payload"] = payload1
-            print(message["header"])
+                return message
+
+
+            if re.search(r"[a-z]+[A-Z]+[0-9]+.{10,}", password) is not None:
+                os.mkdir(path)
+
+                hasher = hashlib.sha3_512()
+                hasher.update(password.encode('utf-8'))
+
+                filepath = os.path.join(path, gloutils.PASSWORD_FILENAME)
+                with open(filepath, ‘w’) as file:
+                    file.write(hasher.hexdigest())
+
+                self._logged_users[client_soc] = username
+                message["header"] = gloutils.Headers.OK
+
+            else:
+                message["header"] = gloutils.Headers.ERROR
+                payload1 = gloutils.ErrorPayload()
+                payload1["error_message"] = "Le mot de passe doit contenir 10 characteres, un chiffre, une minuscule et une majuscule"
+                message["payload"] = payload1
+
+
             return message
         except glosocket.GLOSocketError as e:
             self.cleanup()
@@ -174,9 +189,8 @@ class Server:
 
             if os.path.exists(path):
                 file = open(os.path.join(path, gloutils.PASSWORD_FILENAME), "r")
-                x = hasher.hexdigest() == file.readline()
 
-                if x:
+                if hmac.compare_digest(hasher.hexdigest(), file.readline()):
                     self._logged_users[client_soc] = username
                     message["header"] = gloutils.Headers.OK
 
