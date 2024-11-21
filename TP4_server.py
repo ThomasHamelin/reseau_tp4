@@ -14,6 +14,9 @@ import select
 import socket
 import sys
 import re
+from email.message import EmailMessage
+import smtplib
+from datetime import datetime
 
 import glosocket
 import gloutils
@@ -76,6 +79,41 @@ class Server:
         answer = gloutils.GloMessage()
 
 
+
+        """ TODO: J'ai fais ça, jsp si ça peut t'aider
+        match message:
+            case {"header": gloutils.Headers.AUTH_LOGIN, "payload": payload}:
+                message = self._login(client_soc, payload)
+                data = json.dumps(message)
+                glosocket.send_msg(client_soc, data)
+            case {"header": gloutils.Headers.AUTH_REGISTER, "payload": payload}:
+                message = self._create_account(client_soc, payload)
+                print(message)
+                data = json.dumps(message)
+                glosocket.send_msg(client_soc,data)
+            case {"header": gloutils.Headers.AUTH_LOGOUT, "payload": payload}:
+                self._logout(client_soc)
+            case {"header": gloutils.Headers.STATS_REQUEST}:
+                message = self._get_stats(client_soc)
+                data = json.dumps(message)
+                glosocket.send_msg(client_soc, data)
+            case {"header": gloutils.Headers.EMAIL_SENDING, "payload": payload}:
+                self._send_email(payload)
+            case {"header": gloutils.Headers.INBOX_READING_REQUEST}:
+                print("dans inbox email reading")
+                message = self._get_email_list(client_soc)
+                data = json.dumps(message)
+                glosocket.send_msg(client_soc, data)
+            case {"header": gloutils.Headers.INBOX_READING_CHOICE, "payload": payload}:
+                message = self._get_email(client_soc, payload)
+                data = json.dumps(message)
+                glosocket.send_msg(client_soc, data)
+            case {"header": gloutils.Headers.BYE}:
+                self._remove_client(client_soc)
+            case _: 
+                print(payload)
+        """
+
         if header == gloutils.Headers.AUTH_REGISTER:
             answer = self._create_account(client_soc, message['payload'])
         elif header == gloutils.Headers.AUTH_LOGIN:
@@ -126,7 +164,6 @@ class Server:
         if client_soc in self._client_socs:
             self._client_socs.remove(client_soc)
         client_soc.close()
-
 
     def _create_account(self, client_soc: socket.socket,
                         payload: gloutils.AuthPayload
@@ -247,7 +284,33 @@ class Server:
 
         Une absence de courriel n'est pas une erreur, mais une liste vide.
         """
-        return gloutils.GloMessage()
+        try:
+            user = self._logged_users[client_soc]
+            path = os.path.join(gloutils.SERVER_DATA_DIR, user)
+            emails = []
+
+            emails_file = os.listdir(path)
+            emails_file = sorted(emails_file, key=lambda x: datetime.strptime(open(x, "r").readlines[3], "%a, %d %b %Y %X %z"))
+
+            for number_e, f in enumerate(emails_file):
+                if not f == gloutils.PASSWORD_FILENAME:
+                    the_file = open(f, "r")
+                    email = gloutils.SUBJECT_DISPLAY.format(number = number_e, 
+                                sender = the_file.readlines()[0], 
+                                subjet = the_file.readlines()[2],
+                                date = the_file.readlines()[3])
+                    emails.append(email)
+            
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.OK
+            payload = gloutils.EmailListPayload
+            payload["email_list"] = emails
+            message["payload"] = payload
+            
+            return message
+        except glosocket.GLOSocketError as e:
+            self.cleanup()
+            sys.exit(e)
 
     def _get_email(self, client_soc: socket.socket,
                    payload: gloutils.EmailChoicePayload
@@ -302,7 +365,31 @@ class Server:
 
         Retourne un messange indiquant le succès ou l'échec de l'opération.
         """
-        return gloutils.GloMessage()
+        if "@glo2000.ca" not in payload.destination :
+            try:
+                message = EmailMessage()
+                message["From"] = payload.sender
+                message["To"] = payload.destination
+                message["Subject"] = payload.subject
+                message["Date"] = payload.date
+                message.set_content(payload.content)
+                connection = smtplib.SMTP(host="smtp.ulaval.ca", timeout=10) # À revoir ça
+                connection.send_message(message)
+                header = gloutils.Headers.OK
+                return gloutils.GloMessage(header)
+            except smtplib.SMTPException :
+                reply = "Le message n'a pas pu être envoyé."
+                header = gloutils.Headers.ERROR
+                resp_payload = gloutils.ErrorPayload(reply)
+            except socket.timeout :
+                reply = "Le serveur SMTP est injoinable."
+                header = gloutils.Headers.ERROR
+                resp_payload = gloutils.ErrorPayload(reply)
+        else :
+            reply = "Le destinataire est externe et ne peut pas être joint."
+            header = gloutils.Headers.ERROR
+            resp_payload = gloutils.ErrorPayload(reply)
+        return gloutils.GloMessage(header,resp_payload)
 
     def run(self):
         """Point d'entrée du serveur."""
