@@ -50,7 +50,6 @@ class Server:
             self._server_socket.listen()
         except glosocket.GLOSocketError:
             sys.exit("Erreur lors de la connexion")
-        print(f"Listening on port {self._server_socket.getsockname()[1]}")
 
         # Assure que les donnees existent
         path_exists = os.path.exists(gloutils.SERVER_DATA_DIR)
@@ -59,6 +58,8 @@ class Server:
             os.mkdir(gloutils.SERVER_LOST_DIR)
         elif not os.path.exists(gloutils.SERVER_LOST_DIR):
             os.mkdir(gloutils.SERVER_LOST_DIR)
+
+        print(f"Listening at {self._server_socket.getsockname()[0]}::{self._server_socket.getsockname()[1]}")
 
 
     def _handle_client(self, client_soc) -> None:
@@ -73,72 +74,45 @@ class Server:
             return
 
         # Sinon, on récupère l'entête et on appelle la fonction correspondante
-        print(message)
+        print("Message : ", message)
 
         header = message['header']
         answer = gloutils.GloMessage()
 
-
-
-        """ TODO: J'ai fais ça, jsp si ça peut t'aider
         match message:
             case {"header": gloutils.Headers.AUTH_LOGIN, "payload": payload}:
-                message = self._login(client_soc, payload)
-                data = json.dumps(message)
-                glosocket.send_msg(client_soc, data)
+                answer = self._login(client_soc, payload)
+
             case {"header": gloutils.Headers.AUTH_REGISTER, "payload": payload}:
-                message = self._create_account(client_soc, payload)
-                print(message)
-                data = json.dumps(message)
-                glosocket.send_msg(client_soc,data)
+                answer = self._create_account(client_soc, payload)
+
             case {"header": gloutils.Headers.AUTH_LOGOUT, "payload": payload}:
                 self._logout(client_soc)
+                return
+
             case {"header": gloutils.Headers.STATS_REQUEST}:
-                message = self._get_stats(client_soc)
-                data = json.dumps(message)
-                glosocket.send_msg(client_soc, data)
+                answer = self._get_stats(client_soc)
+
             case {"header": gloutils.Headers.EMAIL_SENDING, "payload": payload}:
-                self._send_email(payload)
+                answer = self._send_email(payload)
+
             case {"header": gloutils.Headers.INBOX_READING_REQUEST}:
                 print("dans inbox email reading")
-                message = self._get_email_list(client_soc)
-                data = json.dumps(message)
-                glosocket.send_msg(client_soc, data)
+                answer = self._get_email_list(client_soc)
+
             case {"header": gloutils.Headers.INBOX_READING_CHOICE, "payload": payload}:
-                message = self._get_email(client_soc, payload)
-                data = json.dumps(message)
-                glosocket.send_msg(client_soc, data)
+                answer = self._get_email(client_soc, payload)
+
             case {"header": gloutils.Headers.BYE}:
                 self._remove_client(client_soc)
-            case _: 
-                print(payload)
-        """
+                return
 
-        if header == gloutils.Headers.AUTH_REGISTER:
-            answer = self._create_account(client_soc, message['payload'])
-        elif header == gloutils.Headers.AUTH_LOGIN:
-            answer = self._login(client_soc, message['payload'])
-        elif header == gloutils.Headers.AUTH_LOGOUT:
-            answer = self._logout(client_soc)
-        elif header == gloutils.Headers.INBOX_READING_REQUEST:
-            #TODO
-            print("Pas encore fait ;)")
-        elif header == gloutils.Headers.INBOX_READING_CHOICE:
-            #TODO
-            print("Pas encore fait ;)")
-        elif header == gloutils.Headers.EMAIL_SENDING:
-            #TODO
-            print("Pas encore fait ;)")
-        elif header == gloutils.Headers.STATS_REQUEST:
-            answer = self._get_stats(client_soc, message['payload'])
-        elif header == gloutils.Headers.BYE:
-            self._remove_client(client_soc)
-            return
-        else:
-            print("Mauvais Header, aucun envoi")
-            return
+            case _: 
+                print("Header invalide")
+                return
 
         try:
+            print("Answer : ",answer)
             glosocket.snd_mesg(client_soc,json.dumps(answer))
         except glosocket.GLOSocketError as e:
             print(e)
@@ -284,33 +258,28 @@ class Server:
 
         Une absence de courriel n'est pas une erreur, mais une liste vide.
         """
-        try:
-            user = self._logged_users[client_soc]
-            path = os.path.join(gloutils.SERVER_DATA_DIR, user)
-            emails = []
+        user = self._logged_users[client_soc]
+        path = os.path.join(gloutils.SERVER_DATA_DIR, user)
+        emails = []
 
-            emails_file = os.listdir(path)
-            emails_file = sorted(emails_file, key=lambda x: datetime.strptime(open(x, "r").readlines[3], "%a, %d %b %Y %X %z"))
+        emails_file = os.listdir(path)
+        #emails_file = sorted(emails_file, key=lambda x: datetime.strptime(open(x, "r").readlines[3], "%a, %d %b %Y %X %z"))
 
-            for number_e, f in enumerate(emails_file):
-                if not f == gloutils.PASSWORD_FILENAME:
-                    the_file = open(f, "r")
-                    email = gloutils.SUBJECT_DISPLAY.format(number = number_e, 
-                                sender = the_file.readlines()[0], 
-                                subjet = the_file.readlines()[2],
-                                date = the_file.readlines()[3])
+        for number_e, filename in enumerate(emails_file):
+            if not filename == gloutils.PASSWORD_FILENAME:
+                f = os.path.join(path, filename)
+                with open(f, "r") as emailfile:
+                    data = json.load(emailfile)
+                    email = gloutils.SUBJECT_DISPLAY.format(number = number_e, sender = data["sender"], subject = data["subject"], date = data["date"])
                     emails.append(email)
-            
-            message = gloutils.GloMessage()
-            message["header"] = gloutils.Headers.OK
-            payload = gloutils.EmailListPayload
-            payload["email_list"] = emails
-            message["payload"] = payload
-            
-            return message
-        except glosocket.GLOSocketError as e:
-            self.cleanup()
-            sys.exit(e)
+
+        message = gloutils.GloMessage()
+        message["header"] = gloutils.Headers.OK
+        payload = gloutils.EmailListPayload()
+        payload["email_list"] = emails
+        message["payload"] = payload
+
+        return message
 
     def _get_email(self, client_soc: socket.socket,
                    payload: gloutils.EmailChoicePayload
@@ -319,13 +288,34 @@ class Server:
         Récupère le contenu de l'email dans le dossier de l'utilisateur associé
         au socket.
         """
-        try:
-            email_list = self._get_email_list(client_soc).payload
-            email = email_list[(int(payload['choice'])) - 1]
-            return gloutils.GloMessage(header=gloutils.Headers.OK, payload=email)
-        except glosocket.GLOSocketError as e:
-            self.cleanup()
-            sys.exit(e)
+
+        choice = int(payload['choice'])
+
+        user = self._logged_users[client_soc]
+        path = os.path.join(gloutils.SERVER_DATA_DIR, user)
+        emails_file = os.listdir(path)
+        print(emails_file)
+
+        for number_e, filename in enumerate(emails_file):
+            print(number_e, " - ", filename, " - ", choice)
+            if not filename == gloutils.PASSWORD_FILENAME:
+                if number_e == choice:
+                    f = os.path.join(path, filename)
+                    with open(f, "r") as emailfile:
+                        data = json.load(emailfile)
+                        payload = gloutils.EmailContentPayload()
+                        payload["sender"]=data["sender"]
+                        payload["destination"]=data["destination"]
+                        payload["subject"]=data["subject"]
+                        payload["date"] = data["date"]
+                        payload["content"]=data["content"]
+                        message = gloutils.GloMessage()
+                        message["header"] = gloutils.Headers.OK
+                        message["payload"] = payload
+                        return message
+
+        print("Impossible de trouve l'email")
+
 
     def _get_stats(self, client_soc: socket.socket) -> gloutils.GloMessage:
         """
@@ -336,10 +326,11 @@ class Server:
             path = os.path.join(gloutils.SERVER_DATA_DIR, self._logged_users[client_soc])
             folder_size = 0
 
-            email_list_size = len(self._get_email_list(client_soc))
+            email_list_size = len(self._get_email_list(client_soc)["payload"]["email_list"])
 
             for x in os.scandir(path):
-                folder_size+=os.path.getsize(x)
+                if x != gloutils.PASSWORD_FILENAME:
+                    folder_size+=os.path.getsize(x)
 
             message = gloutils.GloMessage()
             message["header"] = gloutils.Headers.OK
@@ -364,6 +355,44 @@ class Server:
         - Si le destinataire est externe, considère l'envoi comme un échec.
 
         Retourne un messange indiquant le succès ou l'échec de l'opération.
+        """
+
+        destination = payload["destination"]
+
+        if re.search(f'@{gloutils.SERVER_DOMAIN}$', destination) is None:
+            resp_payload = gloutils.ErrorPayload()
+            resp_payload["error_message"] = "Le destinataire est externe et ne peut pas être joint."
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.ERROR
+            message["payload"] = resp_payload
+            return message
+
+        path = os.path.join(gloutils.SERVER_DATA_DIR, destination.removesuffix('@'+gloutils.SERVER_DOMAIN))
+
+        if not os.path.exists(path):
+            filename = payload["date"] + ".json"
+            filepath = os.path.join(gloutils.SERVER_LOST_DIR, filename)
+            with open(filepath, 'w') as f:
+                json.dump(payload, f)
+
+            resp_payload = gloutils.ErrorPayload()
+            resp_payload["error_message"] = "Le destinataire n'existe pas."
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.ERROR
+            message["payload"] = resp_payload
+            return message
+        else:
+            filename = payload["date"] + ".json"
+            filepath = os.path.join(path ,filename)
+            with open(filepath, 'w') as f:
+                json.dump(payload, f)
+
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.OK
+
+            return message
+
+
         """
         if "@glo2000.ca" not in payload.destination :
             try:
@@ -390,6 +419,7 @@ class Server:
             header = gloutils.Headers.ERROR
             resp_payload = gloutils.ErrorPayload(reply)
         return gloutils.GloMessage(header,resp_payload)
+        """
 
     def run(self):
         """Point d'entrée du serveur."""
@@ -413,7 +443,7 @@ def _main() -> int:
         server.run()
     except KeyboardInterrupt:
         server.cleanup()
-        console.clear()
+        os.system('clear')
     return 0
 
 
