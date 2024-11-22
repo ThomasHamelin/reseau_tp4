@@ -31,8 +31,9 @@ class Client:
 
         self._username = ""
         try:
+            adresse = (destination, gloutils.APP_PORT)
             self._user_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._user_socket.connect(("localhost", gloutils.APP_PORT))
+            self._user_socket.connect(adresse)
         except glosocket.GLOSocketError:
             sys.exit("Erreur lors de la connexion")
 
@@ -193,6 +194,31 @@ class Client:
 
         Transmet ces informations avec l'entête `EMAIL_SENDING`.
         """
+        try:
+            dest_adr: str = input("Entrez l'adresse du destinataire :  ")
+            subject: str = input("Entrez le sujet du courriel :  ")
+            print("Body: (enter '.' sur une ligne simple pour finir la saisi du message)")
+            body = ""
+            buffer = ""
+            while(buffer != ".\n"):
+                body += buffer
+                buffer = input() + '\n'
+            date = gloutils.get_current_utc_time()
+            email = gloutils.EmailContentPayload(sender = self._username, destination = dest_adr, subject = subject, date = date, content = body)
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.EMAIL_SENDING
+            message["payload"] = email
+            data_send = json.dumps(message)
+            glosocket.send_msg(self._socket, data_send)
+            data_rcvd = glosocket.recv_msg(self._socket)
+            
+            message_rcvd = json.loads(data_rcvd)
+            if message_rcvd["header"] != gloutils.Headers.OK:
+                print(message_rcvd["payload"]["error_message"])
+            else:
+                print("Email envoyé avec succès !")
+        except glosocket.GLOSocketError as e:
+            sys.exit(e)
 
 
     def _check_stats(self) -> None:
@@ -201,6 +227,18 @@ class Client:
 
         Affiche les statistiques à l'aide du gabarit `STATS_DISPLAY`.
         """
+        try:
+            message = gloutils.GloMessage()
+            message["header"] = gloutils.Headers.STATS_REQUEST
+            data_send = json.dumps(message)
+            glosocket.send_msg(self._socket, data_send)
+            data_rcvd = glosocket.recv_msg(self._socket)
+            message_rcvd = json.loads(data_rcvd)
+            payload = message_rcvd["payload"]
+            stats = gloutils.STATS_DISPLAY.format(payload["count"], payload["size"])
+            print(stats)
+        except glosocket.GLOSocketError as e:
+            sys.exit(e)
 
     def _logout(self) -> None:
         """
